@@ -8,7 +8,7 @@ from slater_constants import gaussian_exponents, gaussian_contraction_coefficien
 from file_formats import parse_coord_file, parse_xyz_file
 from D4_constants import covalent_radii as D4_covalent_radii
 from math import sqrt, e, pi, log10, comb, exp
-from GFN2_constants import number_of_subshells,angular_momentum_of_subshell,reference_occupations,dimensional_components_of_angular_momentum, effective_nuclear_charge, repulsion_alpha, H_CN, self_energy,electro_negativity, Huckel_covalent_radii,k_poly,K_AB,principal_quantum_number
+from GFN2_constants import number_of_subshells,angular_momentum_of_subshell,reference_occupations,dimensional_components_of_angular_momentum, effective_nuclear_charge, repulsion_alpha, H_CN, self_energy,electro_negativity, Huckel_covalent_radii,k_poly,K_AB,principal_quantum_number,shell_hardness, chemical_hardness, IES_third_order
 
 
 h2o_coord_file = '''
@@ -126,6 +126,9 @@ def overlap_dipol_quadrupol(atoms: list[int], positions: list[list[float]])-> tu
                 D[idx_A][idx_B][dir] = d[dir]
             for dir in [xx,yy,zz,xy,xz,yz]:
                 Q[idx_A][idx_B][dir] = q[dir]
+    #TODO: fix normalization above so this is not necessary. Temporary fix to make the rest work on first iteration 
+    for i in range(len(orbitals)):
+        S[i][i] = 1
     return S,D,Q
 
 def compute_STO_integrals(atom_A: int, subshell_A: int, orbital_A: int, R_A: float, l_A: int, atom_B: int, subshell_B: int, orbital_B: int, R_B: float, l_B: int) -> tuple[float,list[float],list[float]]:
@@ -511,8 +514,35 @@ def get_D4Prime_energy(*args):
     return 0
 def get_GFN2_AES_energy(*args):
     return 0
-def get_GFN_IES_energy(*args):
-    return 0
+def IES_energy_second_order(atoms, positions, charges_per_subshell):
+    second_order_energy = 0
+    for atom_idx_A,atom_A in enumerate(atoms):
+        for subshell_A in range(number_of_subshells[atom_A]):
+            for atom_idx_B,atom_B in enumerate(atoms):
+                for subshell_B in range(number_of_subshells[atom_B]):
+                    eta_A = chemical_hardness[atom_A]
+                    eta_B = chemical_hardness[atom_B]
+                    k_A = shell_hardness[atom_A][subshell_A]
+                    k_B = shell_hardness[atom_B][subshell_B]
+                    eta_AB = 0.5 * (eta_A*(1+k_A) + eta_B*(1+k_B))
+                    R_A = positions[atom_idx_A]
+                    R_B = positions[atom_idx_B]
+                    R_AB2 = euclidean_distance_squared(R_A,R_B)
+                    gamma_AB = (1./(R_AB2+eta_AB**(-2)))**(1/2)
+                    q_A = charges_per_subshell[atom_idx_A][subshell_A]
+                    q_B = charges_per_subshell[atom_idx_B][subshell_B]
+                    second_order_energy += q_A*q_B*gamma_AB
+    second_order_energy *= 0.5
+    return second_order_energy
+def IES_energy_third_order(atoms, positions, charges_per_subshell):
+    third_order_energy = 0
+    for atom_idx_A,atom_A in enumerate(atoms):
+        for subshell_A in range(number_of_subshells[atom_A]):
+            Gamma_A = IES_third_order[atom_A]
+            q_A = charges_per_subshell[atom_idx_A][subshell_A]
+            third_order_energy += q_A**3 * Gamma_A
+    third_order_energy *= 1./3
+    return third_order_energy
 def eigh(*args):
     return 0
 def compute_density_matrix_from_fermi(*args):
@@ -522,7 +552,7 @@ def get_GFN2_energy(atoms: list[int], positions : list[list[float]]) -> float:
     P = density_initial_guess(atoms)
     accuracy = 1.0
     integral_cutoff = max(20.0, 25.0-10.0*log10(accuracy))
-    S, D, Q = overlap_dipol_quadrupol(atoms, positions)
+    S, D, Q = overlap_dipol_quadrupol(atoms, positions )
     H0_EHT = huckel_matrix(atoms, positions, S)
     charges_per_atom, charges_per_shell = mulliken_population_analysis(atoms,P,S)
     repulsion_energy = get_GFN2_repulsion_energy(atoms, positions)
@@ -531,7 +561,12 @@ def get_GFN2_energy(atoms: list[int], positions : list[list[float]]) -> float:
     Huckel_energy = huckel_energy(P, H0_EHT)
     print("Huckel:",Huckel_energy)
     anisotropic_energy = get_GFN2_AES_energy(charges_per_shell, S, D, Q, positions)
-    isotropic_energy = get_GFN_IES_energy(charges_per_atom, positions)
+    isotropic_energy_second_order = IES_energy_second_order(atoms, positions,charges_per_shell)
+    print("isotropic (2nd):", isotropic_energy_second_order)
+    isotropic_energy_third_order = IES_energy_third_order(atoms, positions,charges_per_shell)
+    print("isotropic (3rd):", isotropic_energy_third_order)
+    isotropic_energy = isotropic_energy_second_order+isotropic_energy_third_order
+    print("isotropic total:", isotropic_energy)
     total_energy = repulsion_energy +\
                     dispersion_energy +\
                     Huckel_energy +\
