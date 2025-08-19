@@ -1,0 +1,79 @@
+diff --git a/src/scc_core.f90 b/src/scc_core.f90
+index 5b29581..60ad9f9 100644
+--- a/src/scc_core.f90
++++ b/src/scc_core.f90
+@@ -29,6 +29,7 @@ module xtb_scc_core
+    use xtb_xtb_dispersion
+    use xtb_xtb_multipole
+    use xtb_broyden
++   use utils
+    implicit none
+    private
+ 
+@@ -648,7 +649,7 @@ end subroutine h0scal
+ !! ========================================================================
+ !  total energy for GFN1
+ !! ========================================================================
+-pure subroutine electro(n,at,nbf,nshell,ies,H0,P,dq,dqsh,es,scc)
++pure subroutine gelectro(n,at,nbf,nshell,ies,H0,P,dq,dqsh,es,scc)
+    use xtb_mctc_convert, only : evtoau
+    integer, intent(in) :: n
+    integer, intent(in) :: at(n)
+@@ -684,6 +685,57 @@ pure subroutine electro(n,at,nbf,nshell,ies,H0,P,dq,dqsh,es,scc)
+ !  Etotal in Eh
+    scc = es + 2.0_wp*h*evtoau
+ 
++end subroutine gelectro
++
++subroutine electro(n,at,nbf,nshell,ies,H0,P,dq,dqsh,es,scc)
++   use xtb_mctc_convert, only : evtoau
++   integer, intent(in) :: n
++   integer, intent(in) :: at(n)
++   integer, intent(in) :: nbf
++   integer, intent(in) :: nshell
++   real(wp),intent(in)  :: H0(nbf*(nbf+1)/2)
++   real(wp),intent(in)  :: P (nbf,nbf)
++   type(TxTBCoulomb), intent(inout) :: ies
++   real(wp),intent(in)  :: dq(n)
++   real(wp),intent(in)  :: dqsh(nshell)
++   real(wp),intent(out) :: es
++   real(wp),intent(out) :: scc
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('electro', path)
++   open(newunit=u, file=trim(path), form='unformatted', access='stream')
++   write(u) nbf
++   write(u) size(H0), H0
++   write(u) size(P, 1), size(P, 2), P
++   write(u) size(dq), dq
++   write(u) size(dqsh), dqsh
++
++   if (allocated(ies%thirdOrder%atomicGam)) then
++     write(u) size(ies%thirdorder%atomicgam), ies%thirdorder%atomicgam
++   else
++     write(u) 0
++   end if
++
++   if (allocated(ies%thirdOrder%shellGam)) then
++     write(u) size(ies%thirdOrder%shellGam), ies%thirdOrder%shellGam
++   else
++     write(u) 0
++   end if
++
++   write(u) size(ies%jmat, 1), size(ies%jmat, 2), ies%jmat
++   write(u) size(ies%shift), ies%shift
++
++   call gelectro(n,at,nbf,nshell,ies,H0,P,dq,dqsh,es,scc)
++
++   write(u) es
++   write(u) scc
++   close(u)
++
++   stop
++
+ end subroutine electro
+ 
+ 

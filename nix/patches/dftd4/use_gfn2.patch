@@ -1,0 +1,12 @@
+diff --git a/src/dftd4/model/d4.f90 b/src/dftd4/model/d4.f90
+index ba8b243..7f58bff 100644
+--- a/src/dftd4/model/d4.f90
++++ b/src/dftd4/model/d4.f90
+@@ -177,6 +177,7 @@ subroutine new_d4_model_with_checks(error, d4, mol, ga, gc, wf, ref)
+       call set_refcn(d4%cn(:, isp), izp)
+    end do
+ 
++   ref_charge = d4_ref%gfn2
+    allocate(d4%q(mref, mol%nid))
+    allocate(d4%aiw(23, mref, mol%nid))
+    select case(ref_charge)

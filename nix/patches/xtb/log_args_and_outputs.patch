@@ -1,0 +1,781 @@
+diff --git a/src/intgrad.f90 b/src/intgrad.f90
+index 44f8f7e..ba9d6e4 100644
+--- a/src/intgrad.f90
++++ b/src/intgrad.f90
+@@ -22,6 +22,7 @@
+ module xtb_intgrad
+    use xtb_mctc_accuracy, only : wp
+    use xtb_mctc_constants, only : pi
++   use utils
+    implicit none
+ 
+    integer, parameter :: maxl = 6
+@@ -87,12 +88,18 @@ module xtb_intgrad
+ 
+    integer, parameter, private :: itt(0:3) = [0,1,4,10]
+ 
++
++   interface olapp
++      module procedure olapp_scalar
++      module procedure olapp_array
++   end interface
++
+ contains
+ 
+ 
+ ! --------------------------------------------------------------[SAW1907]-
+ !> calculates a partial overlap in one cartesian direction
+-pure elemental function olapp(l,gama) result(s)
++pure elemental function golapp(l,gama) result(s)
+    !$acc routine seq
+    integer,intent(in) :: l
+    real(wp),intent(in) :: gama
+@@ -108,7 +115,55 @@ pure elemental function olapp(l,gama) result(s)
+       gm=0.5_wp/gama
+       s=gm**lh*dftr(lh)
+    endif
+-end function olapp
++end function golapp
++
++function olapp_array(l, gama) result(s)
++   integer,intent(in) :: l(:)
++   real(wp),intent(in) :: gama
++   real(wp) :: s(size(l))
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('olapp', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) size(l), l
++     write(u) gama
++   end if
++
++   s = golapp(l, gama)
++
++   if (.not.hit_threshold) then
++     write(u) size(s), s
++     close(u)
++   end if
++end function olapp_array
++
++function olapp_scalar(l, gama) result(s)
++   integer,intent(in) :: l
++   real(wp),intent(in) :: gama
++   real(wp) :: s
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('olapp', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) 1, [l]
++     write(u) gama
++   end if
++
++   s = golapp(l, gama)
++
++   if (.not.hit_threshold) then
++     write(u) 1, [s]
++     close(u)
++   end if
++end function olapp_scalar
+ 
+ ! --------------------------------------------------------------[SAW1907]-
+ !> returns center of product Gaussian from two Gaussians by GPT
+@@ -141,7 +196,7 @@ pure subroutine build_kab(ra,alp,rb,bet,gama,kab)
+ end subroutine build_kab
+ 
+ ! --------------------------------------------------------------[SAW1801]-
+-pure subroutine dtrf2(s,li,lj)
++pure subroutine gdtrf2(s,li,lj)
+    use xtb_mctc_blas, only : mctc_gemm
+    real(wp),intent(inout) :: s(6,6)
+    integer, intent(in)    :: li,lj
+@@ -228,6 +283,31 @@ pure subroutine dtrf2(s,li,lj)
+    s(1:5,1:5) = s2(2:6,2:6)
+    return
+ 
++end subroutine gdtrf2
++
++subroutine dtrf2(s,li,lj)
++   use xtb_mctc_blas, only : mctc_gemm
++   real(wp),intent(inout) :: s(6,6)
++   integer, intent(in)    :: li,lj
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('dtrf2', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) size(s, 1), size(s, 2), s
++     write(u) li
++     write(u) lj
++   end if
++
++   call gdtrf2(s,li,lj)
++
++   if (.not.hit_threshold) then
++     write(u) size(s, 1), size(s, 2), s
++     close(u)
++   end if
+ end subroutine dtrf2
+ 
+ ! --------------------------------------------------------------[SAW1801]-
+@@ -354,7 +434,7 @@ pure subroutine prod3(a,b,d,la,lb)
+ 
+ end subroutine prod3
+ 
+-pure subroutine horizontal_shift(ae, l, cfs)
++pure subroutine ghorizontal_shift(ae, l, cfs)
+    integer, intent(in) :: l
+    real(wp), intent(in) :: ae
+    real(wp), intent(inout) :: cfs(*)
+@@ -377,9 +457,34 @@ pure subroutine horizontal_shift(ae, l, cfs)
+       cfs(3)=cfs(3)+ 6*ae*ae*cfs(5)
+       cfs(4)=cfs(4)+ 4*ae*cfs(5)
+    end select
++end subroutine ghorizontal_shift
++
++subroutine horizontal_shift(ae, l, cfs)
++   integer, intent(in) :: l
++   real(wp), intent(in) :: ae
++   real(wp), intent(inout) :: cfs(:)
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('horizontal_shift', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) ae
++     write(u) l
++     write(u) size(cfs), cfs
++   end if
++
++   call ghorizontal_shift(ae, l, cfs)
++
++   if (.not.hit_threshold) then
++     write(u) size(cfs), cfs
++     close(u)
++   end if
+ end subroutine horizontal_shift
+ 
+-pure subroutine form_product(a, b, la, lb, d)
++pure subroutine gform_product(a, b, la, lb, d)
+    integer, intent(in) :: la, lb
+    real(wp), intent(in) :: a(*), b(*)
+    real(wp), intent(inout) :: d(*)
+@@ -468,10 +573,36 @@ pure subroutine form_product(a, b, la, lb, d)
+    !       = <s> + <p> + <d> + <f> + <g> + <h> + <i> + <k> + <l>
+    d(9)=a(5)*b(5)
+ 
+-end subroutine form_product
++end subroutine gform_product
+ 
++subroutine form_product(a, b, la, lb, d)
++   integer, intent(in) :: la, lb
++   real(wp), intent(in) :: a(:), b(:)
++   real(wp), intent(inout) :: d(:)
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('form_product', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) la
++     write(u) lb
++     write(u) size(a), a
++     write(u) size(b), b
++     write(u) size(d), d
++   end if
++
++   call gform_product(a, b, la, lb, d)
++
++   if (.not.hit_threshold) then
++     write(u) size(d), d
++     close(u)
++   end if
++end subroutine form_product
+ 
+-pure subroutine overlap_3d(ri, rj, rp, ai, aj, li, lj, s1d, s3d)
++subroutine overlap_3d(ri, rj, rp, ai, aj, li, lj, s1d, s3d)
+    real(wp), intent(in) :: ri(3)
+    real(wp), intent(in) :: rj(3)
+    real(wp), intent(in) :: rp(3)
+@@ -506,7 +637,7 @@ pure subroutine overlap_3d(ri, rj, rp, ai, aj, li, lj, s1d, s3d)
+ 
+ end subroutine overlap_3d
+ 
+-pure subroutine multipole_3d(ri, rj, rc, rp, ai, aj, li, lj, s1d, s3d)
++subroutine gmultipole_3d(ri, rj, rc, rp, ai, aj, li, lj, s1d, s3d)
+    real(wp), intent(in) :: ri(3)
+    real(wp), intent(in) :: rj(3)
+    real(wp), intent(in) :: rp(3)
+@@ -552,9 +683,46 @@ pure subroutine multipole_3d(ri, rj, rc, rp, ai, aj, li, lj, s1d, s3d)
+    s3d( 9) = val(1, 2) * val(2, 1) * val(3, 2)
+    s3d(10) = val(1, 1) * val(2, 2) * val(3, 2)
+ 
++end subroutine gmultipole_3d
++
++subroutine multipole_3d(ri, rj, rc, rp, ai, aj, li, lj, s1d, s3d)
++   real(wp), intent(in) :: ri(3)
++   real(wp), intent(in) :: rj(3)
++   real(wp), intent(in) :: rp(3)
++   real(wp), intent(in) :: rc(3)
++   real(wp), intent(in) :: ai
++   real(wp), intent(in) :: aj
++   integer, intent(in) :: li(3)
++   integer, intent(in) :: lj(3)
++   real(wp), intent(in) :: s1d(0:)
++   real(wp), intent(out) :: s3d(10)
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('multipole_3d', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) size(ri), ri
++     write(u) size(rj), rj
++     write(u) size(rc), rc
++     write(u) size(rp), rp
++     write(u) size(li), li
++     write(u) size(lj), lj
++     write(u) size(s1d), s1d
++     write(u) size(s3d), s3d
++   end if
++
++   call gmultipole_3d(ri, rj, rc, rp, ai, aj, li, lj, s1d, s3d)
++
++   if (.not.hit_threshold) then
++     write(u) size(s3d), s3d
++     close(u)
++   end if
+ end subroutine multipole_3d
+ 
+-pure subroutine overlap_grad_3d(ri, rj, rp, ai, aj, li, lj, s1d, s3d, ds3d)
++subroutine overlap_grad_3d(ri, rj, rp, ai, aj, li, lj, s1d, s3d, ds3d)
+    real(wp), intent(in) :: ri(3)
+    real(wp), intent(in) :: rj(3)
+    real(wp), intent(in) :: rp(3)
+@@ -604,7 +772,7 @@ pure subroutine overlap_grad_3d(ri, rj, rp, ai, aj, li, lj, s1d, s3d, ds3d)
+ 
+ end subroutine overlap_grad_3d
+ 
+-pure subroutine multipole_grad_3d(ri, rj, rc, rp, ai, aj, li, lj, s1d, s3d, ds3d)
++subroutine multipole_grad_3d(ri, rj, rc, rp, ai, aj, li, lj, s1d, s3d, ds3d)
+    real(wp), intent(in) :: ri(3)
+    real(wp), intent(in) :: rj(3)
+    real(wp), intent(in) :: rc(3)
+@@ -728,7 +896,7 @@ pure subroutine shiftintg(g,s,r)
+ end subroutine shiftintg
+ 
+ 
+-pure subroutine get_overlap(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point,intcut, &
++subroutine get_overlap(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point,intcut, &
+       &                nprim,primcount,alp,cont,sint)
+    integer, intent(in)  :: icao
+    integer, intent(in)  :: jcao
+@@ -799,7 +967,7 @@ pure subroutine get_overlap(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point,intcut
+ 
+ end subroutine get_overlap
+ 
+-pure subroutine get_grad_overlap(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point,intcut, &
++subroutine get_grad_overlap(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point,intcut, &
+       &                     nprim,primcount,alp,cont,sdq,sdqg)
+    integer, intent(in)  :: icao
+    integer, intent(in)  :: jcao
+@@ -872,8 +1040,7 @@ pure subroutine get_grad_overlap(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point,i
+    enddo  ! ip : loop over i prims
+ end subroutine get_grad_overlap
+ 
+-
+-pure subroutine get_multiints(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point, &
++subroutine gget_multiints(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point, &
+       &                           intcut,nprim,primcount,alp,cont,ss,dd,qq)
+    integer, intent(in)  :: icao
+    integer, intent(in)  :: jcao
+@@ -948,10 +1115,59 @@ pure subroutine get_multiints(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point, &
+          enddo  ! mli : Cartesian component of i prims
+       enddo ! jp : loop over j prims
+    enddo  ! ip : loop over i prims
+-end subroutine get_multiints
++end subroutine gget_multiints
++
++subroutine get_multiints(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point, &
++      &                           intcut,nprim,primcount,alp,cont,ss,dd,qq)
++   integer, intent(in)  :: icao
++   integer, intent(in)  :: jcao
++   integer, intent(in)  :: naoi
++   integer, intent(in)  :: naoj
++   integer, intent(in)  :: ishtyp
++   integer, intent(in)  :: jshtyp
++   real(wp),intent(in)  :: ri(3)
++   real(wp),intent(in)  :: rj(3)
++   real(wp),intent(in)  :: point(3)
++   real(wp),intent(in)  :: intcut
++   real(wp),intent(out) :: ss(:,:)
++   real(wp),intent(out) :: dd(:,:,:)
++   real(wp),intent(out) :: qq(:,:,:)
++
++   integer, intent(in)  :: nprim(:)
++   integer, intent(in)  :: primcount(:)
++   real(wp),intent(in)  :: alp(:)
++   real(wp),intent(in)  :: cont(:)
+ 
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('get_multiints', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) icao, jcao, naoi, naoj, ishtyp, jshtyp
++     write(u) ri
++     write(u) rj
++     write(u) point
++     write(u) intcut
++     write(u) size(nprim), nprim
++     write(u) size(primcount), primcount
++     write(u) size(alp), alp
++     write(u) size(cont), cont
++   end if
++
++   call gget_multiints(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj,point,intcut,nprim,primcount,alp,cont,ss,dd,qq)
++
++   if (.not.hit_threshold) then
++     write(u) size(ss, 1), size(ss, 2), ss
++     write(u) size(dd, 1), size(dd, 2), size(dd, 3), dd
++     write(u) size(qq, 1), size(qq, 2), size(qq, 3), qq
++
++     close(u)
++   end if
++end subroutine get_multiints
+ 
+-pure subroutine get_grad_multiint(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj, &
++subroutine get_grad_multiint(icao,jcao,naoi,naoj,ishtyp,jshtyp,ri,rj, &
+       &                           intcut,nprim,primcount,alp,cont,sdq,sdqg)
+    integer, intent(in)  :: icao
+    integer, intent(in)  :: jcao
+diff --git a/src/scc_core.f90 b/src/scc_core.f90
+index 5b29581..7fba795 100644
+--- a/src/scc_core.f90
++++ b/src/scc_core.f90
+@@ -29,6 +29,7 @@ module xtb_scc_core
+    use xtb_xtb_dispersion
+    use xtb_xtb_multipole
+    use xtb_broyden
++   use utils
+    implicit none
+    private
+ 
+@@ -606,7 +607,7 @@ end subroutine scc
+ 
+ 
+ !> H0 off-diag scaling
+-subroutine h0scal(hData,il,jl,izp,jzp,valaoi,valaoj,km)
++subroutine gh0scal(hData,il,jl,izp,jzp,valaoi,valaoj,km)
+   !$acc routine seq
+    type(THamiltonianData), intent(in) :: hData
+    integer, intent(in)  :: il
+@@ -642,6 +643,39 @@ subroutine h0scal(hData,il,jl,izp,jzp,valaoi,valaoj,km)
+    endif
+ 
+ 
++end subroutine gh0scal
++
++subroutine h0scal(hData,il,jl,izp,jzp,valaoi,valaoj,km)
++  !$acc routine seq
++   type(THamiltonianData), intent(in) :: hData
++   integer, intent(in)  :: il
++   integer, intent(in)  :: jl
++   integer, intent(in)  :: izp
++   integer, intent(in)  :: jzp
++   logical, intent(in)  :: valaoi
++   logical, intent(in)  :: valaoj
++   real(wp),intent(out) :: km
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('h0scal', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) il, jl
++     write(u) izp, jzp
++     write(u) valaoi, valaoj
++   end if
++
++   call gh0scal(hData,il,jl,izp,jzp,valaoi,valaoj,km)
++
++   if (.not.hit_threshold) then
++     write(u) km
++     close(u)
++   end if
++
++
+ end subroutine h0scal
+ 
+ 
+diff --git a/src/scf_module.F90 b/src/scf_module.F90
+index 7166f76..c809e8e 100644
+--- a/src/scf_module.F90
++++ b/src/scf_module.F90
+@@ -53,6 +53,7 @@ module xtb_scf
+    use xtb_hlex
+    use xtb_local
+    use xtb_dipole
++   use utils
+    implicit none
+    private
+ 
+@@ -231,6 +232,11 @@ subroutine scf(env, mol, wfn, basis, pcem, xtbData, solvation, &
+ !  broyden stuff
+    logical  :: broy
+ 
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
+ ! ------------------------------------------------------------------------
+ !  initialization
+ ! ------------------------------------------------------------------------
+@@ -545,6 +551,14 @@ subroutine scf(env, mol, wfn, basis, pcem, xtbData, solvation, &
+       &     qpint(6,basis%nao,basis%nao), &
+       &     source = 0.0_wp)
+ 
++
++   hit_threshold = testfile_path('coordination_number', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) size(cn), cn
++     close(u)
++   end if
++
+    call getSelfEnergy(xtbData%hamiltonian, xtbData%nShell, mol%at, cn=cn, &
+       & selfEnergy=selfEnergy, dSEdcn=dSEdcn)
+    ! compute integrals and prescreen to set up list arrays
+diff --git a/src/xtb/basisset.f90 b/src/xtb/basisset.f90
+index ad99d35..71a8433 100644
+--- a/src/xtb/basisset.f90
++++ b/src/xtb/basisset.f90
+@@ -22,6 +22,7 @@ module xtb_basis
+    use xtb_type_basisset
+    use xtb_xtb_data
+    use xtb_slater
++   use utils
+    implicit none
+    private
+ 
+@@ -30,7 +31,7 @@ module xtb_basis
+ 
+ contains
+ 
+-subroutine newBasisset(xtbData,n,at,basis,ok)
++subroutine gnewBasisset(xtbData,n,at,basis,ok)
+    type(TxTBData), intent(in) :: xtbData
+    type(TBasisset),intent(inout) :: basis
+    integer, intent(in)  :: n
+@@ -141,8 +142,8 @@ subroutine newBasisset(xtbData,n,at,basis,ok)
+                basis%cont(ipr)=-ss*c(p)
+             enddo
+             call atovlp(0,basis%nprim(ibf),basis%nprim(ibf), &
+-               &        basis%alp(idum),basis%alp(idum), &
+-               &        basis%cont(idum),basis%cont(idum),ss)
++               &        basis%alp,basis%alp, &
++               &        basis%cont,basis%cont,ss)
+             do p=1,basis%nprim(ibf)
+                basis%cont(idum-1+p)=basis%cont(idum-1+p)/sqrt(ss)
+             enddo
+@@ -268,8 +269,8 @@ subroutine newBasisset(xtbData,n,at,basis,ok)
+                basis%cont(ipr)=-ss*cs(p)
+             enddo
+             call atovlp(0,basis%nprim(ibf),basis%nprim(ibf), &
+-               &        basis%alp(idum),basis%alp(idum), &
+-               &        basis%cont(idum),basis%cont(idum),ss)
++               &        basis%alp,basis%alp, &
++               &        basis%cont,basis%cont,ss)
+             do p=1,basis%nprim(ibf)
+                basis%cont(idum-1+p)=basis%cont(idum-1+p)/sqrt(ss)
+             enddo
+@@ -305,6 +306,65 @@ subroutine newBasisset(xtbData,n,at,basis,ok)
+ 
+    ok = all(basis%alp(:ipr) > 0.0_wp) .and. basis%nbf == ibf .and. basis%nao == iao
+ 
++end subroutine gnewBasisset
++
++subroutine newBasisset(xtbData,n,at,basis,ok)
++   type(TxTBData), intent(in) :: xtbData
++   type(TBasisset),intent(inout) :: basis
++   integer, intent(in)  :: n
++   integer, intent(in)  :: at(n)
++   logical, intent(out) :: ok
++
++   integer  :: elem,valao
++   integer  :: i,j,m,l,iat,ati,ish,ibf,iao,ipr,p,nprim,thisprimR,idum,npq,npqR,pqn
++   real(wp) :: a(10),c(10),zeta,k1,k2,split1,pp,zqfR,zcnfR,qi,level
++   real(wp) :: aR(10),cR(10),ss
++   real(wp) :: as(10),cs(10)
++   integer :: info
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('newBasisset', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) size(at), at
++   end if
++
++   call gnewBasisset(xtbData,n,at,basis,ok)
++
++   if (.not.hit_threshold) then
++     write(u) size(basis%shells, 1), size(basis%shells, 2), basis%shells
++     write(u) size(basis%sh2ao, 1), size(basis%sh2ao, 2), basis%sh2ao
++     write(u) size(basis%sh2bf, 1), size(basis%sh2bf, 2), basis%sh2bf
++     write(u) size(basis%minalp), basis%minalp
++     write(u) size(basis%level), basis%level
++     write(u) size(basis%zeta), basis%zeta
++     write(u) size(basis%valsh), basis%valsh
++     write(u) size(basis%hdiag), basis%hdiag
++     write(u) size(basis%alp), basis%alp
++     write(u) size(basis%cont), basis%cont
++     write(u) size(basis%hdiag2), basis%hdiag2
++     write(u) size(basis%aoexp), basis%aoexp
++     write(u) size(basis%ash), basis%ash
++     write(u) size(basis%lsh), basis%lsh
++     write(u) size(basis%ao2sh), basis%ao2sh
++     write(u) size(basis%nprim), basis%nprim
++     write(u) size(basis%primcount), basis%primcount
++     write(u) size(basis%caoshell, 1), size(basis%caoshell, 2), basis%caoshell
++     write(u) size(basis%saoshell, 1), size(basis%saoshell, 2), basis%saoshell
++     write(u) size(basis%fila, 1), size(basis%fila, 2), basis%fila
++     write(u) size(basis%fila2, 1), size(basis%fila2, 2), basis%fila2
++     write(u) size(basis%lao), basis%lao
++     write(u) size(basis%aoat), basis%aoat
++     write(u) size(basis%valao), basis%valao
++     write(u) size(basis%lao2), basis%lao2
++     write(u) size(basis%aoat2), basis%aoat2
++     write(u) size(basis%valao2), basis%valao2
++     write(u) ok
++     close(u)
++   end if
+ end subroutine newBasisset
+ 
+ 
+@@ -327,7 +387,7 @@ subroutine xbasis0(xtbData,n,at,basis)
+ 
+ end subroutine xbasis0
+ 
+-subroutine dim_basis(xtbData,n,at,nshell,nao,nbf)
++subroutine gdim_basis(xtbData,n,at,nshell,nao,nbf)
+    type(TxTBData), intent(in) :: xtbData
+    integer,intent(in)  :: n
+    integer,intent(in)  :: at(n)
+@@ -371,13 +431,42 @@ subroutine dim_basis(xtbData,n,at,nshell,nao,nbf)
+       endif
+    enddo
+ 
+-end subroutine dim_basis
++end subroutine gdim_basis
+ 
++subroutine dim_basis(xtbData,n,at,nshell,nao,nbf)
++   type(TxTBData), intent(in) :: xtbData
++   integer,intent(in)  :: n
++   integer,intent(in)  :: at(n)
++   integer,intent(out) :: nshell
++   integer,intent(out) :: nao
++   integer,intent(out) :: nbf
++
++   integer i,j,k,l
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('dim_basis', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) size(at), at
++   end if
++
++   call gdim_basis(xtbData,n,at,nshell,nao,nbf)
++
++   if (.not.hit_threshold) then
++     write(u) nshell
++     write(u) nao
++     write(u) nbf
++     close(u)
++   end if
++ end subroutine dim_basis
+ 
+ ! ------------------------------------------------------------------------
+ !  Helper functions
+ 
+-subroutine atovlp(l,npri,nprj,alpa,alpb,conta,contb,ss)
++subroutine gatovlp(l,npri,nprj,alpa,alpb,conta,contb,ss)
+    integer l,npri,nprj
+    real(wp) alpa(*),alpb(*)
+    real(wp) conta(*),contb(*)
+@@ -402,6 +491,37 @@ subroutine atovlp(l,npri,nprj,alpa,alpb,conta,contb,ss)
+       enddo
+    enddo
+ 
++end subroutine gatovlp
++
++subroutine atovlp(l,npri,nprj,alpa,alpb,conta,contb,ss)
++   integer l,npri,nprj
++   real(wp) alpa(:),alpb(:)
++   real(wp) conta(:),contb(:)
++   real(wp) ss
++
++   integer ii,jj
++   real(wp) ab,s00,sss,ab05
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('atovlp', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) l, npri, nprj
++     write(u) size(alpa), alpa
++     write(u) size(alpb), alpb
++     write(u) size(conta), conta
++     write(u) size(contb), contb
++   end if
++
++   call gatovlp(l,npri,nprj,alpa,alpb,conta,contb,ss)
++
++   if (.not.hit_threshold) then
++     write(u) ss
++     close(u)
++   end if
+ end subroutine atovlp
+ 
+ subroutine set_s_function(basis,iat,ish,iao,ibf,ipr,npq,l,nprim,zeta,level,valao)
+diff --git a/src/xtb/hamiltonian.f90 b/src/xtb/hamiltonian.f90
+index 59ca64c..aa524b4 100644
+--- a/src/xtb/hamiltonian.f90
++++ b/src/xtb/hamiltonian.f90
+@@ -143,7 +143,7 @@ end subroutine getSelfEnergy2D
+ 
+ !> Computes the dipole and quadrupole integrals and performs screening to
+ !  determine, which contribute to potential
+-subroutine build_SDQH0(nShell, hData, nat, at, nbf, nao, xyz, trans, selfEnergy, &
++subroutine gbuild_SDQH0(nShell, hData, nat, at, nbf, nao, xyz, trans, selfEnergy, &
+       & intcut, caoshell, saoshell, nprim, primcount, alp, cont, &
+       & sint, dpint, qpint, H0, H0_noovlp)
+    implicit none
+@@ -368,6 +368,96 @@ subroutine build_SDQH0(nShell, hData, nat, at, nbf, nao, xyz, trans, selfEnergy,
+       end do
+    end do
+ 
++end subroutine gbuild_SDQH0
++
++subroutine build_SDQH0(nShell, hData, nat, at, nbf, nao, xyz, trans, selfEnergy, &
++      & intcut, caoshell, saoshell, nprim, primcount, alp, cont, &
++      & sint, dpint, qpint, H0, H0_noovlp)
++   implicit none
++   integer, intent(in) :: nShell(:)
++   type(THamiltonianData), intent(in) :: hData
++   !> # of atoms
++   integer, intent(in)  :: nat
++   !> # of spherical AOs (SAOs)
++   integer, intent(in)  :: nao
++   !> # of Cartesian AOs (CAOs)
++   integer, intent(in)  :: nbf
++   integer, intent(in)  :: at(nat)
++   !> Cartesian coordinates
++   real(wp),intent(in)  :: xyz(3,nat)
++   real(wp),intent(in)    :: trans(:, :)
++   real(wp), intent(in) :: selfEnergy(:, :)
++   !> Integral cutoff according to prefactor from Gaussian product theorem
++   real(wp),intent(in)  :: intcut
++   !> Map shell of atom to index in CAO space (lowest Cart. component is taken)
++   integer, intent(in)  :: caoshell(:,:)
++   !> Map shell of atom to index in SAO space (lowest m_l component is taken)
++   integer, intent(in)  :: saoshell(:,:)
++   integer, intent(in)  :: nprim(:)
++   !> Index of first primitive (over entire system) of given CAO
++   integer, intent(in)  :: primcount(:)
++   real(wp),intent(in)  :: alp(:)
++   real(wp),intent(in)  :: cont(:)
++   !> Overlap integral matrix
++   real(wp),intent(out) :: sint(nao,nao)
++   !> Dipole integral matrix
++   real(wp),intent(out) :: dpint(3,nao,nao)
++   !> Quadrupole integral matrix
++   real(wp),intent(out) :: qpint(6,nao,nao)
++   !> Core Hamiltonian
++   real(wp),intent(out) :: H0(:)
++   !> Core Hamiltonian without overlap contribution
++   real(wp),intent(out) :: H0_noovlp(:)
++
++
++   integer i,j,k,l,m,ii,jj,ll,mm,kk,ki,kj,kl,mi,mj,ij
++   real(wp) tmp1,tmp2,tmp3,tmp4,step,step2
++   real(wp) dx,dy,dz,s00r,s00l,s00,alpj
++   real(wp) skj,r1,r2,tt,t1,t2,t3,t4,thr2,f,ci,cc,cj,alpi,rab2,ab,est
++
++   real(wp)  ra(3),rb(3),f1,f2,point(3)
++   real(wp) dtmp(3),qtmp(6),ss(6,6),dd(3,6,6),qq(6,6,6),tmp(6,6)
++   integer ip,jp,iat,jat,izp,jzp,ish,jsh,icao,jcao,iao,jao,jshmax
++   integer ishtyp,jshtyp,iptyp,jptyp,naoi,naoj,mli,mlj,iprim,jprim
++   integer :: il, jl, itr
++   real(wp) :: zi, zj, zetaij, km, hii, hjj, hav, shpoly
++   integer itt(0:3)
++   parameter(itt  =(/0,1,4,10/))
++   real(wp) :: saw(10)
++
++   logical :: hit_threshold
++   integer :: u
++   character(len=200) :: path
++
++   hit_threshold = testfile_path('build_SDQH0', path)
++   if (.not.hit_threshold) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++     write(u) nat
++     write(u) size(at), at
++     write(u) nbf
++     write(u) nao
++     write(u) size(xyz, 1), size(xyz, 2), xyz
++     write(u) size(trans, 1), size(trans, 2), trans
++     write(u) size(selfEnergy, 1), size(selfEnergy, 2), selfEnergy
++     write(u) intcut
++     write(u) size(caoshell, 1), size(caoshell, 2), caoshell
++     write(u) size(saoshell, 1), size(saoshell, 2), saoshell
++     write(u) size(nprim), nprim
++     write(u) size(primcount), primcount
++     write(u) size(alp), alp
++     write(u) size(cont), cont
++   end if
++
++   call gbuild_SDQH0(nShell, hData, nat, at, nbf, nao, xyz, trans, selfEnergy, intcut, caoshell, saoshell, nprim, primcount, alp, cont, sint, dpint, qpint, H0, H0_noovlp)
++
++   if (.not.hit_threshold) then
++     write(u) size(sint, 1), size(sint, 2), sint
++     write(u) size(dpint, 1), size(dpint, 2), size(dpint, 3), dpint
++     write(u) size(qpint, 1), size(qpint, 2), size(qpint, 3), qpint
++     write(u) size(H0), H0
++     write(u) size(H0_noovlp), H0_noovlp
++     close(u)
++   end if
+ end subroutine build_SDQH0
+ 
+ 

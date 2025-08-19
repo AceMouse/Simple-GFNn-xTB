@@ -1,0 +1,85 @@
+diff --git a/src/meson.build b/src/meson.build
+index ced9a9d..12ddc1d 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -158,4 +158,5 @@ srcs += files(
+   'wrmo.f90',
+   'xhelp.f90',
+   'zmatpr.f90',
++  'utils.f90',
+ )
+diff --git a/src/utils.f90 b/src/utils.f90
+new file mode 100644
+index 0000000..1e4e3a8
+--- /dev/null
++++ b/src/utils.f90
+@@ -0,0 +1,69 @@
++module utils
++  implicit none
++  integer, parameter :: max_dirs = 100
++  character(len=100), dimension(max_dirs) :: dir_names
++  integer, dimension(max_dirs) :: file_counts
++  integer :: num_tracked = 0
++  contains
++
++  subroutine increment_count(dir, count)
++    character(len=*), intent(in) :: dir
++    integer, intent(out) :: count
++    integer :: i
++
++    do i = 1, num_tracked
++      if (trim(dir_names(i)) == trim(dir)) then
++        file_counts(i) = file_counts(i) + 1
++        count = file_counts(i)
++        return
++      end if
++    end do
++
++    ! New entry
++    if (num_tracked < max_dirs) then
++      num_tracked = num_tracked + 1
++      dir_names(num_tracked) = dir
++      file_counts(num_tracked) = 1
++      count = 1
++    else
++      print *, "Error: file_tracker full"
++      count = -1
++    end if
++  end subroutine increment_count
++
++  subroutine create_directory(dir_name)
++     character(len=*), intent(in) :: dir_name
++     character(len=255) :: command
++
++     ! Construct the command to create the directory
++     write(command, '("mkdir -p ", A)') trim(adjustl(dir_name))
++
++     ! Execute the command
++     call system(command)
++  end subroutine create_directory
++
++  logical function testfile_path(fn_name, path)
++    implicit none
++    character(len=*), intent(in)  :: fn_name
++    character(len=*), intent(out) :: path
++
++    character(len=100) :: filename, dir
++    logical :: exist_flag
++    integer :: file_index
++
++    dir = 'calls/' // trim(fn_name) // '/'
++
++    call increment_count(trim(dir), file_index)
++    if (file_index > 10) then
++      testfile_path = .true.
++      return
++    else
++      testfile_path = .false.
++    endif
++
++    write(filename, '(A,I0.4)') 'args_', file_index
++    write(path, '(A,A,A)') trim(dir), trim(filename), ".bin"
++
++  end function testfile_path
++
++end module utils

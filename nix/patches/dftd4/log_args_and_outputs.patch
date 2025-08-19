@@ -1,0 +1,161 @@
+diff --git a/src/dftd4/model/d4.f90 b/src/dftd4/model/d4.f90
+index ba8b243..c3662b4 100644
+--- a/src/dftd4/model/d4.f90
++++ b/src/dftd4/model/d4.f90
+@@ -26,6 +26,7 @@ module dftd4_model_d4
+    use mctc_env, only : error_type, fatal_error, wp
+    use mctc_io, only : structure_type
+    use mctc_io_constants, only : pi
++   use utils
+    implicit none
+    private
+ 
+@@ -71,7 +72,7 @@ contains
+ 
+ 
+ !> Create new D4 dispersion model from molecular structure input
+-subroutine new_d4_model_with_checks(error, d4, mol, ga, gc, wf, ref)
++subroutine gnew_d4_model_with_checks(error, d4, mol, ga, gc, wf, ref)
+    !DEC$ ATTRIBUTES DLLEXPORT :: new_d4_model_with_checks
+ 
+    !> Instance of the dispersion model
+@@ -219,6 +220,46 @@ subroutine new_d4_model_with_checks(error, d4, mol, ga, gc, wf, ref)
+       end do
+    end do
+ 
++end subroutine gnew_d4_model_with_checks
++
++subroutine new_d4_model_with_checks(error, d4, mol, ga, gc, wf, ref)
++   !> Instance of the dispersion model
++   type(d4_model), intent(out) :: d4
++
++   !> Molecular structure data
++   class(structure_type), intent(in) :: mol
++
++   !> Error handling
++   type(error_type), allocatable, intent(out) :: error
++
++   !> Charge scaling height
++   real(wp), intent(in), optional :: ga
++
++   !> Charge scaling steepness
++   real(wp), intent(in), optional :: gc
++
++   !> Weighting factor for coordination number interpolation
++   real(wp), intent(in), optional :: wf
++
++   !> Reference charge selection
++   integer, intent(in), optional :: ref
++
++   logical :: exists
++   integer :: u
++   character(len=200) :: path
++
++   exists = testfile_path('new_d4_model_with_checks', path)
++   if (.not.exists) then
++     open(newunit=u, file=trim(path), form='unformatted', access='stream')
++   end if
++
++   call gnew_d4_model_with_checks(error, d4, mol, ga, gc, wf, ref)
++
++   if (.not.exists) then
++     write(u) size(d4%c6, 1), size(d4%c6, 2), size(d4%c6, 3), size(d4%c6, 4), d4%c6
++     close(u)
++   end if
++
+ end subroutine new_d4_model_with_checks
+ 
+ !> Create new dispersion model from molecular structure input without
+diff --git a/src/meson.build b/src/meson.build
+index 78ad5e0..c9c78f1 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -18,4 +18,5 @@ subdir('dftd4')
+ 
+ srcs += files(
+   'dftd4.f90',
++  'utils.f90',
+ )
+diff --git a/src/utils.f90 b/src/utils.f90
+new file mode 100644
+index 0000000..51e4b4c
+--- /dev/null
++++ b/src/utils.f90
+@@ -0,0 +1,77 @@
++module utils
++  implicit none
++  contains
++
++  subroutine random_uuid(uuid)
++      character(len=*), intent(out) :: uuid
++      character(len=16) :: hexchars
++      integer :: i, n
++      real :: r(1)
++      character(len=1) :: c
++
++      hexchars = '0123456789abcdef'
++      uuid = ''
++      do i = 1, 36
++          if (i == 9 .or. i == 14 .or. i == 19 .or. i == 24) then
++              uuid(i:i) = '-'
++          else
++              call random_number(r)
++              n = 1 + int(r(1) * 16.0)
++              uuid(i:i) = hexchars(n:n)
++          end if
++      end do
++  end subroutine
++
++  subroutine create_directory(dir_name)
++     character(len=*), intent(in) :: dir_name
++     character(len=255) :: command
++
++     ! Construct the command to create the directory
++     write(command, '("mkdir -p ", A)') trim(adjustl(dir_name))
++
++     ! Execute the command
++     call system(command)
++  end subroutine create_directory
++
++  logical function testfile_path(fn_name, path)
++    implicit none
++    character(len=*), intent(in)  :: fn_name
++    character(len=*), intent(out) :: path
++
++    character(len=36) :: uuid
++    character(len=100) :: filename, dir
++
++    integer, parameter :: max_cached = 100
++    character(len=100), save :: cached_dirs(max_cached) = ''
++    integer :: i, slot
++
++    dir = 'calls/' // trim(fn_name) // '/'
++    slot = -1
++
++    ! Search for fn_name in cache
++    do i = 1, max_cached
++      if (trim(cached_dirs(i)) == trim(dir)) then
++        testfile_path = .true.
++        return
++      elseif (cached_dirs(i) == '') then
++        slot = i
++      end if
++    end do
++
++    ! Not in cache, do the check
++    inquire(file=trim(dir)//'.', exist=testfile_path)
++
++    if (.not. testfile_path) then
++      call create_directory(trim(dir))
++
++      call random_seed()
++      call random_uuid(uuid)
++      write(filename, '(A,A)') 'args_', uuid
++      write(path, '(A,A,A)') trim(dir), trim(filename), ".bin"
++    endif
++
++    cached_dirs(slot) = dir
++  end function testfile_path
++
++end module utils
++
