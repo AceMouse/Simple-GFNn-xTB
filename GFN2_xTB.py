@@ -4,7 +4,7 @@ References:
 [GFN2] : pubs.acs.org/doi/pdf/10.1021/acs.jctc.8b01176
 
 '''
-from slater_constants import gaussian_exponents, gaussian_linear_coeficients, slater_exponents, number_of_gaussians, slaterToGauss_simple
+from slater_constants import gaussian_exponents, gaussian_contraction_coefficients, slater_exponents, number_of_gaussians#, slaterToGauss_simple
 from file_formats import parse_coord_file, parse_xyz_file
 from D4_constants import covalent_radii as D4_covalent_radii
 from math import sqrt, e, pi, log10, comb, exp
@@ -80,27 +80,170 @@ def get_orbitals_cartesian(atoms: list[int]) -> list[tuple[int]]:
                 orbitals.append((atom_idx,atom,subshell,orbital))
     return orbitals
 
-def get_square_matrix(n: int, default_element=0.0) -> list[list[float]]:
-    matrix = []
-    for _ in range(n):
-        row = []
-        for _ in range(n):
-            row.append(default_element)
-        matrix.append(row)
-    return matrix
+def vector(n: int) -> list[float]:
+    return [0.0 for _ in range(n)]
 
-def density_initial_guess(atoms: list[int]):
+def square_matrix(n: int) -> list[list[float]]:
+    return [[0.0 for _ in range(n)] for _ in range(n)]
+
+def square_matrix_of_vectors(n: int, v:int) -> list[list[list[float]]]:
+    return [[[0.0 for _ in range(v)] for _ in range(n)] for _ in range(n)]
+
+def density_initial_guess(atoms: list[int]) -> list[list[float]]:
     orbitals = get_orbitals(atoms)
-    occs = get_square_matrix(len(orbitals))
-    for idx,(_,atom,subshell,orbital) in enumerate(orbitals):
+    fractional_occupations = square_matrix(len(orbitals))
+    for orbital_idx,(_,atom,subshell,_) in enumerate(orbitals):
         l = angular_momentum_of_subshell[atom][subshell] 
         orbitals_in_subshell = l*2+1 
         electrons_in_subshell = reference_occupations[atom][subshell]
         electrons_per_orbital = electrons_in_subshell/orbitals_in_subshell
-        occs[idx][idx] = electrons_per_orbital
-    return occs
+        fractional_occupations[orbital_idx][orbital_idx] = electrons_per_orbital
+    return fractional_occupations
 
-def build_overlap_dipol_quadrupol(element_ids, positions, intcut): 
+x = 0
+y = 1
+z = 2
+xx = 0
+yy = 1
+zz = 2
+xy = 3
+xz = 4
+yz = 5
+def overlap_dipol_quadrupol(atoms: list[int], positions: list[list[float]])-> tuple[list[list[float]],list[list[list[float]]],list[list[list[float]]]]:
+    orbitals = get_orbitals(atoms)
+    S = square_matrix(len(orbitals))
+    D = square_matrix_of_vectors(len(orbitals),3)
+    Q = square_matrix_of_vectors(len(orbitals),6)
+    for idx_A, (atom_idx_A,atom_A,subshell_A,orbital_A) in enumerate(orbitals):
+        for idx_B, (atom_idx_B,atom_B,subshell_B,orbital_B) in enumerate(orbitals):
+            R_A = positions[atom_idx_A]
+            R_B = positions[atom_idx_B]
+            l_A = angular_momentum_of_subshell[atom_A][subshell_A]
+            l_B = angular_momentum_of_subshell[atom_B][subshell_B]
+            s,d,q = compute_STO_integrals(atom_A, subshell_A, orbital_A, R_A, l_A, atom_B, subshell_B, orbital_B, R_B, l_B)
+            S[idx_A][idx_B] = s
+            for dir in [x,y,z]:
+                D[idx_A][idx_B][dir] = d[dir]
+            for dir in [xx,yy,zz,xy,xz,yz]:
+                Q[idx_A][idx_B][dir] = q[dir]
+    return S,D,Q
+
+def compute_STO_integrals(atom_A: int, subshell_A: int, orbital_A: int, R_A: float, l_A: int, atom_B: int, subshell_B: int, orbital_B: int, R_B: float, l_B: int) -> tuple[float,list[float],list[float]]:
+    number_of_gaussians_A = number_of_gaussians[atom_A][subshell_A]
+    number_of_gaussians_B = number_of_gaussians[atom_B][subshell_B]
+    slater_exponent_A = slater_exponents[atom_A][subshell_A]
+    slater_exponent_B = slater_exponents[atom_B][subshell_B]
+    overlap = 0
+    dipol = vector(3)
+    quadrupol = vector(6)
+    for gaussian_i in range(number_of_gaussians_A):
+        for gaussian_j in range(number_of_gaussians_B):
+            exponent_i = normalised_gaussian_exponent(atom_A, subshell_A, gaussian_i, slater_exponent_A,number_of_gaussians_A)
+            exponent_j = normalised_gaussian_exponent(atom_B, subshell_B, gaussian_j, slater_exponent_B,number_of_gaussians_B)
+            contraction_i = normalised_contraction_coefficient(atom_A, subshell_A, orbital_A, gaussian_i, exponent_i,number_of_gaussians_A)
+#            print(contraction_i)
+            contraction_j = normalised_contraction_coefficient(atom_B, subshell_B, orbital_B, gaussian_j, exponent_j,number_of_gaussians_B)
+            distance_between_A_B = euclidean_distance(R_A, R_B)
+            if distance_between_A_B**2 > 2000:
+                continue
+            s,d,q = compute_GTO_integrals(R_A, l_A, orbital_A, R_B, l_B, orbital_B, exponent_i, exponent_j, distance_between_A_B)
+            overlap += contraction_i*contraction_j*s
+            for dir in [x,y,z]:
+                dipol[dir] += contraction_i*contraction_j*d[dir]
+            for dir in [xx,yy,zz,xy,xz,yz]:
+                quadrupol[dir] += contraction_i*contraction_j*q[dir]
+#    print(overlap)
+    return overlap,dipol,quadrupol
+
+def normalised_gaussian_exponent(atom: int, subshell: int, gaussian: int, slater_exponent: float, number_of_gaussians:int) -> float:
+    normalisation_factor = slater_exponent**2
+    l = angular_momentum_of_subshell[atom][subshell]
+    n = principal_quantum_number[atom][subshell]
+    return gaussian_exponents[number_of_gaussians][l][n][gaussian]*normalisation_factor
+
+def normalised_contraction_coefficient(atom: int, subshell: int, orbital:int, gaussian: int, gaussian_exponent: float, number_of_gaussians:int) -> float:
+    l = angular_momentum_of_subshell[atom][subshell]
+    l_x = dimensional_components_of_angular_momentum[l][orbital][x]
+    l_y = dimensional_components_of_angular_momentum[l][orbital][y]
+    l_z = dimensional_components_of_angular_momentum[l][orbital][z]
+    df_x = double_factorial(l_x-1)
+    df_y = double_factorial(l_y-1)
+    df_z = double_factorial(l_z-1)
+    normalisation_factor = (2*gaussian_exponent)**(-(l+3/2)) * ((df_x*df_y*df_z)/(2**(l/2))) * pi**(3/2)
+    n = principal_quantum_number[atom][subshell]
+    return gaussian_contraction_coefficients[number_of_gaussians][l][n][gaussian]*normalisation_factor
+
+def double_factorial(n: int) -> int:
+    if n <= 1:
+        return 1
+    return n*double_factorial(n-2)
+
+def shift_polynomial(l_dim: int, difference_to_P_dim: float) -> list[float]:
+    poly_coefficients = vector(l_dim+1)
+    for m in range(l_dim+1):
+        poly_coefficients[m] = comb(l_dim, m)*difference_to_P_dim**(l_dim-m)
+    return poly_coefficients
+
+def convolute(coef_A: list[float], coef_B: list[float]) -> list[float]:
+    max_t = len(coef_A)+len(coef_B)-2
+    poly_coefficients = vector(max_t+1)
+    for i,ci in enumerate(coef_A):
+        for j,cj in enumerate(coef_B):
+            poly_coefficients[i+j] += ci*cj
+    return poly_coefficients
+
+
+def compute_gaussian_integral_factors(alpha:float, l_A:int, l_B:int)-> list[float]:
+    factors = vector(l_A+l_B+3)
+    for t in range(l_A+l_B+3):
+        if t % 2 == 0:
+            df = double_factorial(t-1)
+            factors[t] = alpha**(-(t+1)/2) * (df/(2**(t/2))) * sqrt(pi)
+        else:
+            factors[t] = 0
+    return factors
+
+def compute_GTO_integrals(R_A: float, l_A: int, orbital_A: int, R_B: float, l_B: int, orbital_B: int, exponent_i: float, exponent_j: float, distance_between_A_B: float) -> tuple[float,list[float],list[float]]:
+    alpha = exponent_i + exponent_j
+    exponents = exponent_i * exponent_j
+    K_AB = ((2*exponents)/(alpha*pi))**(3/4) * e**(-(exponents/alpha)*distance_between_A_B)
+    integral_factors = compute_gaussian_integral_factors(alpha, l_A, l_B)
+    zeroth_moment = vector(3)
+    first_moment = vector(3)
+    second_moment = vector(3)
+    for dim in [x,y,z]:
+        gaussian_product_center_in_dim = (exponent_i*R_A[dim]+exponent_j*R_B[dim])/alpha
+        centre_relative_to_A = gaussian_product_center_in_dim-R_A[dim]
+        centre_relative_to_B = gaussian_product_center_in_dim-R_B[dim]
+        l_A_dim = dimensional_components_of_angular_momentum[l_A][orbital_A][dim]
+        l_B_dim = dimensional_components_of_angular_momentum[l_B][orbital_B][dim]
+        vmis = shift_polynomial(l_A_dim, centre_relative_to_A)
+        vmjs = shift_polynomial(l_B_dim, centre_relative_to_B)
+        vts = convolute(vmis, vmjs)
+        for t, vt in enumerate(vts):
+            zeroth_moment[dim] += vt * integral_factors[t+0]
+            for m in range(1+1):
+                first_moment[dim] += comb(1,m) * gaussian_product_center_in_dim**(1-m) * vt * integral_factors[t+m]
+            for m in range(2+1):
+                second_moment[dim] += comb(2,m) * gaussian_product_center_in_dim**(2-m) * vt * integral_factors[t+m]
+
+    overlap = K_AB*zeroth_moment[x]*zeroth_moment[y]*zeroth_moment[z]
+#    print(overlap,K_AB,zeroth_moment)
+    dipol = vector(3)
+    dipol[x] = K_AB*first_moment[x]*zeroth_moment[y]*zeroth_moment[z]
+    dipol[y] = K_AB*zeroth_moment[x]*first_moment[y]*zeroth_moment[z]
+    dipol[z] = K_AB*zeroth_moment[x]*zeroth_moment[y]*first_moment[z]
+
+    quadrupol = vector(6)
+    quadrupol[xx] = K_AB*second_moment[x]*zeroth_moment[y]*zeroth_moment[z]
+    quadrupol[yy] = K_AB*zeroth_moment[x]*second_moment[y]*zeroth_moment[z]
+    quadrupol[zz] = K_AB*zeroth_moment[x]*zeroth_moment[y]*second_moment[z]
+    quadrupol[xy] = K_AB*first_moment[x]*first_moment[y]*zeroth_moment[z]
+    quadrupol[xz] = K_AB*first_moment[x]*zeroth_moment[y]*first_moment[z]
+    quadrupol[yz] = K_AB*zeroth_moment[x]*first_moment[y]*first_moment[z]
+    return overlap, dipol, quadrupol
+
+def build_overlap_dipol_quadrupol_old(element_ids, positions, intcut): 
     dfactorial = [1.0, 1.0, 3.0, 15.0, 105.0, 945.0, 10395.0, 135135.0]
     trafo = [
         [1], # s
@@ -108,20 +251,11 @@ def build_overlap_dipol_quadrupol(element_ids, positions, intcut):
         [1,1,1,sqrt(3.),sqrt(3.),sqrt(3.)], # d
         [1.0, 1.0, 1.0, sqrt(5.0), sqrt(5.0), sqrt(5.0), sqrt(5.0), sqrt(5.0), sqrt(5.0), sqrt(15.0)] # f
     ]
-    x = 0
-    y = 1
-    z = 2
-    xx = 0
-    yy = 1
-    zz = 2
-    xy = 3
-    xz = 4
-    yz = 5
     orbitals = get_orbitals(element_ids)
     debug_slater_exponents = [0] * (len(orbitals))
-    slater_0th_moment = get_square_matrix(len(orbitals))
-    slater_1st_moment = get_square_matrix(len(orbitals), default_element=[0,0,0])
-    slater_2nd_moment = get_square_matrix(len(orbitals), default_element=[0,0,0,0,0,0])
+    slater_0th_moment = square_matrix(len(orbitals))
+    slater_1st_moment = square_matrix(len(orbitals), default_element=[0,0,0])
+    slater_2nd_moment = square_matrix(len(orbitals), default_element=[0,0,0,0,0,0])
     for orbital_idx_A,(atom_idx_A,atom_A,subshell_A,orbital_A) in enumerate(orbitals):
         l_A = angular_momentum_of_subshell[atom_A][subshell_A]
         number_of_gaussians_A = number_of_gaussians[atom_A][subshell_A]
@@ -295,7 +429,7 @@ def get_coordination_numbers(atoms: list[int], positions: list[list[float]]) -> 
 
 def huckel_matrix(atoms: list[int], positions: list[list[float]], overlap: list[list[float]]) -> list[list[float]]:
     orbitals = get_orbitals(atoms)
-    H_EHT = get_square_matrix(len(orbitals))
+    H_EHT = square_matrix(len(orbitals))
     CN = get_coordination_numbers(atoms,positions)
     for orbital_idx, (atom_idx,atom,subshell,orbital) in enumerate(orbitals):
         CN_A = CN[atom_idx]
@@ -333,11 +467,12 @@ def huckel_matrix(atoms: list[int], positions: list[list[float]], overlap: list[
             H_EHT[idx_A][idx_B] = K_ll*(1/2)*(H_nn+H_mm)*S_nm*Y*X*PI
     return H_EHT
 
-def get_GFN2_Huckel_energy(P:list[list[float]], H:list[list[float]]) -> float:
+def huckel_energy(density_matrix:list[list[int]], huckel_matrix:list[list[int]]) -> float:
     E_EHT = 0
-    for shell_mu in range(len(P)):
-        for shell_nu in range(len(P[0])):
-            E_EHT += P[shell_nu][shell_mu] * H[shell_mu][shell_nu]
+    orbitals = len(density_matrix)
+    for shell_mu in range(orbitals):
+        for shell_nu in range(orbitals):
+            E_EHT += density_matrix[shell_nu][shell_mu] * huckel_matrix[shell_mu][shell_nu]
     return E_EHT
 
 def get_error_squared_2d(A:list[list[float]], B:list[list[float]]) -> float:
@@ -347,28 +482,28 @@ def get_error_squared_2d(A:list[list[float]], B:list[list[float]]) -> float:
             error += (A[i][j] - B[i][j])**2
     return error
 def mulliken_population_analysis(atoms:list[int], density_matrix:list[list[float]], overlap_matrix: list[list[float]]) -> tuple[list[float],list[float]]:
-    mulliken_charges = [0 for atom_A in atoms]
-    partial_mulliken_charges = [0 for _ in density_matrix[0]]
+    orbitals = get_orbitals(atoms)
+    mulliken_charges = vector(len(atoms))
+    partial_mulliken_charges = []
     orbital_idx_A = 0
     for atom_idx_A,atom_A in enumerate(atoms):
-        l_A = angular_momentum_of_subshell[atom_A]
-        Z_A = atom_A + 1
-        mulliken_charges[atom_idx_A] = Z_A
-        for shell_A in range(l_A*2+1):
-            orbital_idx_B = 0
-            for atom_B in atoms:
-                l_B = angular_momentum_of_subshell[atom_B]
-                for shell_B in range(l_B*2+1):
-                    partial_charge = density_matrix[orbital_idx_A][orbital_idx_B]*overlap_matrix[orbital_idx_A][orbital_idx_B]
-                    partial_mulliken_charges[orbital_idx_A] -= partial_charge
-                    mulliken_charges[atom_idx_A] -= partial_charge
-                    orbital_idx_B += 1
-            orbital_idx_A += 1
+        partials = []
+        for subshell_A in range(number_of_subshells[atom_A]):
+            l = angular_momentum_of_subshell[atom_A][subshell_A]
+            per_subshell = 0
+            for orbital_A in range(l*2+1):
+                for orbital_idx_B, (atom_idx_B,atom_B,subshell_B,orbital_B) in enumerate(orbitals):
+                    per_subshell -= density_matrix[orbital_idx_A][orbital_idx_B]*overlap_matrix[orbital_idx_A][orbital_idx_B]
+                orbital_idx_A += 1
+            partials.append(per_subshell)
+        partial_mulliken_charges.append(partials)
+        mulliken_charges[atom_idx_A] += sum(partials)+atom_A + 1
     return mulliken_charges,partial_mulliken_charges
+
 def build_SDQH0(atoms: list[int], positions : list[list[float]]):
     orbitals = get_orbitals(atoms)
     
-    S = get_square_matrix(len(orbitals))
+    S = square_matrix(len(orbitals))
     for idx in range(len(orbitals)):
         S[idx][idx] = 1
     return S,0,0,0
@@ -387,19 +522,19 @@ def get_GFN2_energy(atoms: list[int], positions : list[list[float]]) -> float:
     P = density_initial_guess(atoms)
     accuracy = 1.0
     integral_cutoff = max(20.0, 25.0-10.0*log10(accuracy))
-    S, D, Q = build_overlap_dipol_quadrupol(atoms, positions, integral_cutoff)
+    S, D, Q = overlap_dipol_quadrupol(atoms, positions)
     H0_EHT = huckel_matrix(atoms, positions, S)
-    charges_per_atom, charges_per_shell = mulliken_population_analysis(P,atoms)
+    charges_per_atom, charges_per_shell = mulliken_population_analysis(atoms,P,S)
     repulsion_energy = get_GFN2_repulsion_energy(atoms, positions)
-    print(repulsion_energy)
+    print("repulsion", repulsion_energy)
     dispersion_energy = get_D4Prime_energy(..., charges_per_atom, positions)
-    huckel_energy = get_GFN2_Huckel_energy(P, H0_EHT)
-    print(huckel_energy)
+    Huckel_energy = huckel_energy(P, H0_EHT)
+    print("Huckel:",Huckel_energy)
     anisotropic_energy = get_GFN2_AES_energy(charges_per_shell, S, D, Q, positions)
     isotropic_energy = get_GFN_IES_energy(charges_per_atom, positions)
     total_energy = repulsion_energy +\
                     dispersion_energy +\
-                    huckel_energy +\
+                    Huckel_energy +\
                     anisotropic_energy +\
                     isotropic_energy
     return total_energy

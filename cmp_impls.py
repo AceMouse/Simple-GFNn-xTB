@@ -3,7 +3,7 @@ import glob
 import argparse
 import os
 import math
-from GFN2_xTB import build_overlap_dipol_quadrupol, get_coordination_numbers
+from GFN2_xTB import overlap_dipol_quadrupol, get_coordination_numbers
 
 # Parse command-line arguments
 parser = argparse.ArgumentParser(description="Compare original xtb results with our own python implementation.")
@@ -153,7 +153,7 @@ def compare(fo, py, label, force_equal=False, rtol=1e-02):
 
 
         
-def test_build_overlap_dipol_quadrupol():
+def test_overlap_dipol_quadrupol():
     for i, file_path in enumerate(glob.glob(f'{directory}/build_SDQH0/*.bin')):
         with open(file_path, 'rb') as f:
             def read_ints(n=1):
@@ -199,7 +199,7 @@ def test_build_overlap_dipol_quadrupol():
             H0_noovlp_res1 = read_ints(1)[0]
             H0_noovlp_res = np.fromfile(f, dtype=np.float64, count=H0_noovlp_res1)
 
-            S, D, Q = build_overlap_dipol_quadrupol(at-1, xyz, intcut)
+            S, D, Q = overlap_dipol_quadrupol(at-1, xyz)
             compare(sint_res,  S, "[build_overlap_dipol_quadrupol] S")
             #compare(dpint_res, D, "[build_overlap_dipol_quadrupol] D")
             #compare(qpint_res, Q, "[build_overlap_dipol_quadrupol] Q")
@@ -239,5 +239,5 @@ def test_coordination_number():
 
 
 
-test_build_overlap_dipol_quadrupol()
+test_overlap_dipol_quadrupol()
 test_coordination_number()
